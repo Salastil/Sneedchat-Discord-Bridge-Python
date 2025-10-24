@@ -118,9 +118,7 @@ logger.info(f"Using Sneedchat room ID: {SNEEDCHAT_ROOM_ID}")
 logger.info(f"Bridge username: {BRIDGE_USERNAME}")
 if BRIDGE_USER_ID:
     logger.info(f"Bridge user filtering enabled - ID: {BRIDGE_USER_ID}")
-logger.info(
-    f"File logging: {
-        'enabled' if ENABLE_FILE_LOGGING else 'disabled'}")
+logger.info(f"File logging: {'enabled' if ENABLE_FILE_LOGGING else 'disabled'}")
 
 # -----------------------------
 # BBCode -> Markdown parser
@@ -375,9 +373,7 @@ class CookieRefreshService:
                         logger.error("❌ Login failed: no cookies received")
                         return None
                     cookie_string = "; ".join(auth_cookies)
-                    logger.info(
-                        f"✅ Successfully fetched fresh cookie ({
-                            len(auth_cookies)} tokens)")
+                    logger.info(f"✅ Successfully fetched fresh cookie ({len(auth_cookies)} tokens)")
                     return cookie_string
         except Exception as e:
             logger.error(f"❌ Failed to fetch fresh cookie: {e}")
