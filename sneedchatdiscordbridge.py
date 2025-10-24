@@ -21,9 +21,11 @@ from dotenv import load_dotenv
 
 # -----------------------------
 # Constants
+INACTIVITY_CHECK_INTERVAL = 300  # 5-minute idle heartbeat
 # -----------------------------
 PROCESSED_CACHE_SIZE = 250        # sliding cache for processed sneed ids
-OUTBOUND_MATCH_WINDOW = 60        # seconds to match Sneed echo with outbound Discord message
+# seconds to match Sneed echo with outbound Discord message
+OUTBOUND_MATCH_WINDOW = 60
 COOKIE_REFRESH_INTERVAL = 4 * 60 * 60  # 4 hours
 OUTAGE_UPDATE_INTERVAL = 10       # outage embed update interval in seconds
 QUEUED_MESSAGE_TTL = 90           # seconds before queued message is abandoned
@@ -33,7 +35,7 @@ LITTERBOX_TTL = "72h"             # 72 hours
 # Memory management constants
 MAPPING_CACHE_SIZE = 1000          # Max message ID mappings to keep
 MAPPING_CLEANUP_INTERVAL = 300     # Cleanup every 5 minutes
-MAPPING_MAX_AGE = 3600             # Mappings older than 1 hour are eligible for removal
+# MAPPING_MAX_AGE removed (size-bounded only)
 
 # Outage tracking constants
 OUTAGE_CLEANUP_DELAY = 120         # Delete outage message 2 minutes after reconnect
@@ -43,8 +45,12 @@ OUTAGE_INSTABILITY_THRESHOLD = 5   # 5+ outages = unstable
 # CLI / env
 # -----------------------------
 parser = argparse.ArgumentParser(description="Sneedchat ↔ Discord Bridge")
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-parser.add_argument("--env", type=str, default=".env", help="Path to .env file (default: .env)")
+parser.add_argument(
+    "--debug",
+    action="store_true",
+    help="Enable debug logging")
+parser.add_argument("--env", type=str, default=".env",
+                    help="Path to .env file (default: .env)")
 args = parser.parse_args()
 load_dotenv(args.env)
 
@@ -99,22 +105,28 @@ DISCORD_PING_USER_ID = os.getenv("DISCORD_PING_USER_ID")
 if DISCORD_PING_USER_ID:
     try:
         DISCORD_PING_USER_ID = int(DISCORD_PING_USER_ID)
-    except:
+    except BaseException:
         DISCORD_PING_USER_ID = None
 
 RECONNECT_INTERVAL = int(os.getenv("RECONNECT_INTERVAL", 7))
-ENABLE_FILE_LOGGING = os.getenv("ENABLE_FILE_LOGGING", "false").lower() == "true"
+ENABLE_FILE_LOGGING = os.getenv(
+    "ENABLE_FILE_LOGGING",
+    "false").lower() == "true"
 
 logger.info(f"Using .env file: {args.env}")
 logger.info(f"Using Sneedchat room ID: {SNEEDCHAT_ROOM_ID}")
 logger.info(f"Bridge username: {BRIDGE_USERNAME}")
 if BRIDGE_USER_ID:
     logger.info(f"Bridge user filtering enabled - ID: {BRIDGE_USER_ID}")
-logger.info(f"File logging: {'enabled' if ENABLE_FILE_LOGGING else 'disabled'}")
+logger.info(
+    f"File logging: {
+        'enabled' if ENABLE_FILE_LOGGING else 'disabled'}")
 
 # -----------------------------
 # BBCode -> Markdown parser
 # -----------------------------
+
+
 def bbcode_to_markdown(text: str) -> str:
     if not text:
         return ""
@@ -122,8 +134,13 @@ def bbcode_to_markdown(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
     # Basic replacements (case-insensitive, DOTALL)
-    text = re.sub(r'\[img\](.*?)\[/img\]', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'\[video\](.*?)\[/video\]', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[img\](.*?)\[/img\]',
+        r'\1',
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[video\](.*?)\[/video\]', r'\1',
+                  text, flags=re.IGNORECASE | re.DOTALL)
 
     # [url=link]text[/url] -> [text](link) unless text is itself a link
     def _url_replace(m):
@@ -132,26 +149,47 @@ def bbcode_to_markdown(text: str) -> str:
         if re.match(r'^https?://', txt, re.IGNORECASE):
             return txt
         return f'[{txt}]({link})'
-    text = re.sub(r'\[url=(.*?)\](.*?)\[/url\]', _url_replace, text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[url=(.*?)\](.*?)\[/url\]',
+        _url_replace,
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
 
     # [url]link[/url] -> link
-    text = re.sub(r'\[url\](.*?)\[/url\]', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[url\](.*?)\[/url\]',
+        r'\1',
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
 
     # Bold/italic/underline/strike (handle nested)
-    text = re.sub(r'\[(?:b|strong)\](.*?)\[/\s*(?:b|strong)\]', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'\[(?:i|em)\](.*?)\[/\s*(?:i|em)\]', r'*\1*', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'\[(?:u)\](.*?)\[/\s*u\]', r'__\1__', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'\[(?:s|strike)\](.*?)\[/\s*(?:s|strike)\]', r'~~\1~~', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[(?:b|strong)\](.*?)\[/\s*(?:b|strong)\]',
+                  r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[(?:i|em)\](.*?)\[/\s*(?:i|em)\]',
+        r'*\1*',
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[(?:u)\](.*?)\[/\s*u\]', r'__\1__',
+                  text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[(?:s|strike)\](.*?)\[/\s*(?:s|strike)\]',
+                  r'~~\1~~', text, flags=re.IGNORECASE | re.DOTALL)
 
     # Code & code blocks
-    text = re.sub(r'\[code\](.*?)\[/code\]', r'`\1`', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'\[(?:php|plain|code=\w+)\](.*?)\[/(?:php|plain|code)\]', r'```\1```', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[code\](.*?)\[/code\]', r'`\1`',
+                  text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[(?:php|plain|code=\w+)\](.*?)\[/(?:php|plain|code)\]',
+        r'```\1```',
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
 
     # Quote blocks
     def _quote(m):
         inner = m.group(1).strip()
         return '\n'.join('> ' + line for line in inner.splitlines())
-    text = re.sub(r'\[quote\](.*?)\[/quote\]', _quote, text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[quote\](.*?)\[/quote\]', _quote,
+                  text, flags=re.IGNORECASE | re.DOTALL)
 
     def _quote_attr(m):
         who = m.group(1).strip()
@@ -159,13 +197,22 @@ def bbcode_to_markdown(text: str) -> str:
         header = f'> **{who} said:**'
         lines = '\n'.join('> ' + line for line in inner.splitlines())
         return header + '\n' + lines
-    text = re.sub(r'\[quote=["\']?(.*?)["\']?\](.*?)\[/quote\]', _quote_attr, text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[quote=["\']?(.*?)["\']?\](.*?)\[/quote\]',
+        _quote_attr,
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
 
     # Spoilers
-    text = re.sub(r'\[spoiler\](.*?)\[/spoiler\]', r'||\1||', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'\[spoiler\](.*?)\[/spoiler\]', r'||\1||',
+                  text, flags=re.IGNORECASE | re.DOTALL)
 
     # Color/size - strip tags but keep content
-    text = re.sub(r'\[(?:color|size)=.*?\](.*?)\[/\s*(?:color|size)\]', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r'\[(?:color|size)=.*?\](.*?)\[/\s*(?:color|size)\]',
+        r'\1',
+        text,
+        flags=re.IGNORECASE | re.DOTALL)
 
     # Lists & bullets
     text = re.sub(r'^\[\*\]\s*', '• ', text, flags=re.MULTILINE)
@@ -180,67 +227,52 @@ def bbcode_to_markdown(text: str) -> str:
 # -----------------------------
 # Bounded Mapping Dictionary (Memory Management)
 # -----------------------------
-class BoundedMappingDict:
 
-    def __init__(self, maxsize: int = 1000, max_age: int = 3600):
+
+class BoundedMappingDict:
+    def __init__(self, maxsize: int = 1000):
         self.maxsize = maxsize
-        self.max_age = max_age
-        self.data = OrderedDict()  # Maintains insertion order
-        self.timestamps = {}       # Track when entries were added
-    
+        self.data = OrderedDict()
+
     def __setitem__(self, key, value):
-        # If key exists, move to end (mark as recently used)
         if key in self.data:
             self.data.move_to_end(key)
         else:
             self.data[key] = value
-            self.timestamps[key] = time.time()
-            
-            # Evict oldest if over capacity
             if len(self.data) > self.maxsize:
-                oldest_key = next(iter(self.data))
-                del self.data[oldest_key]
-                self.timestamps.pop(oldest_key, None)
-    
+                self.data.popitem(last=False)
+
     def __getitem__(self, key):
-        # Mark as recently accessed
         if key in self.data:
             self.data.move_to_end(key)
         return self.data[key]
-    
+
     def get(self, key, default=None):
         try:
             return self[key]
         except KeyError:
             return default
-    
+
     def pop(self, key, default=None):
-        self.timestamps.pop(key, None)
         return self.data.pop(key, default)
-    
+
     def __contains__(self, key):
         return key in self.data
-    
+
     def cleanup_old_entries(self) -> int:
-        """Remove entries older than max_age. Returns count removed."""
-        now = time.time()
-        to_remove = [
-            key for key, ts in self.timestamps.items()
-            if now - ts > self.max_age
-        ]
-        for key in to_remove:
-            self.data.pop(key, None)
-            self.timestamps.pop(key, None)
-        return len(to_remove)
-    
+        removed = 0
+        while len(self.data) > self.maxsize:
+            self.data.popitem(last=False)
+            removed += 1
+        return removed
+
     def __len__(self):
         return len(self.data)
 
-# -----------------------------
-# Cookie Refresh Service
-# -----------------------------
+
 class CookieRefreshService:
     """Automatic cookie fetching and refresh service"""
+
     def __init__(self, username: str, password: str, domain: str = "kiwifarms.st"):
         self.username = username
         self.password = password
@@ -264,7 +296,8 @@ class CookieRefreshService:
             difficulty = int(challenge_element.get('data-sssg-difficulty', 0))
             if not salt or difficulty == 0:
                 return ""
-            logger.info(f"Solving KiwiFlare challenge (difficulty={difficulty})")
+            logger.info(
+                f"Solving KiwiFlare challenge (difficulty={difficulty})")
             nonce = random.randint(0, 2**63 - 1)
             attempts = 0
             max_attempts = 10_000_000
@@ -272,7 +305,8 @@ class CookieRefreshService:
                 nonce += 1
                 attempts += 1
                 input_string = f"{salt}{nonce}"
-                hash_result = hashlib.sha256(input_string.encode('utf-8')).digest()
+                hash_result = hashlib.sha256(
+                    input_string.encode('utf-8')).digest()
                 required_bytes = difficulty // 8
                 required_bits = difficulty % 8
                 valid = True
@@ -280,7 +314,8 @@ class CookieRefreshService:
                     if hash_result[i] != 0:
                         valid = False
                         break
-                if valid and required_bits > 0 and required_bytes < len(hash_result):
+                if valid and required_bits > 0 and required_bytes < len(
+                        hash_result):
                     byte_val = hash_result[required_bytes]
                     mask = 0xFF << (8 - required_bits)
                     if byte_val & mask != 0:
@@ -292,7 +327,8 @@ class CookieRefreshService:
                         result = await submit_response.json()
                     if 'auth' in result:
                         token = result['auth']
-                        session.cookie_jar.update_cookies({'sssg_clearance': token}, response_url=url)
+                        session.cookie_jar.update_cookies(
+                            {'sssg_clearance': token}, response_url=url)
                         return token
             logger.warning("Failed to solve challenge within attempt limit")
             return ""
@@ -326,7 +362,12 @@ class CookieRefreshService:
                 post_url = f"https://{self.domain}/login/login"
                 async with session.post(post_url, data=login_data, allow_redirects=False) as response:
                     auth_cookies = []
-                    cookie_names = ['xf_user', 'xf_toggle', 'xf_csrf', 'xf_session', 'sssg_clearance']
+                    cookie_names = [
+                        'xf_user',
+                        'xf_toggle',
+                        'xf_csrf',
+                        'xf_session',
+                        'sssg_clearance']
                     for cookie in session.cookie_jar:
                         if cookie.key in cookie_names and cookie.value:
                             auth_cookies.append(f"{cookie.key}={cookie.value}")
@@ -334,7 +375,9 @@ class CookieRefreshService:
                         logger.error("❌ Login failed: no cookies received")
                         return None
                     cookie_string = "; ".join(auth_cookies)
-                    logger.info(f"✅ Successfully fetched fresh cookie ({len(auth_cookies)} tokens)")
+                    logger.info(
+                        f"✅ Successfully fetched fresh cookie ({
+                            len(auth_cookies)} tokens)")
                     return cookie_string
         except Exception as e:
             logger.error(f"❌ Failed to fetch fresh cookie: {e}")
@@ -342,14 +385,15 @@ class CookieRefreshService:
 
     async def refresh_loop(self):
         try:
-            logger.info("🔑 Fetching initial cookie...")
+            logger.info("🔒 Fetching initial cookie...")
             fresh_cookie = await self.fetch_fresh_cookie()
             if fresh_cookie:
                 self.current_cookie = fresh_cookie
                 self.cookie_ready.set()
                 logger.info("✅ Initial cookie acquired, bridge can start")
             else:
-                logger.error("❌ Failed to acquire initial cookie, cannot start bridge")
+                logger.error(
+                    "❌ Failed to acquire initial cookie, cannot start bridge")
                 return
             while not self.shutdown_event.is_set():
                 try:
@@ -363,7 +407,8 @@ class CookieRefreshService:
                     self.current_cookie = fresh_cookie
                     logger.info("✅ Cookie refresh completed successfully")
                 else:
-                    logger.warning("⚠️ Cookie refresh failed, keeping existing cookie")
+                    logger.warning(
+                        "⚠️ Cookie refresh failed, keeping existing cookie")
         except Exception as e:
             logger.error(f"❌ Cookie refresh loop error: {e}")
 
@@ -389,15 +434,28 @@ class CookieRefreshService:
 # -----------------------------
 # SneedChatClient
 # -----------------------------
+
+
 class SneedChatClient:
-    def __init__(self, cookie: str, room_id: int = 16, reconnect_interval: int = 7,
-                 cookie_service: Optional[CookieRefreshService] = None):
+    def __init__(
+            self,
+            cookie: str,
+            room_id: int = 16,
+            reconnect_interval: int = 7,
+            cookie_service: Optional[CookieRefreshService] = None):
         self.ws_url = "wss://kiwifarms.st:9443/chat.ws"
         self.cookie = cookie
         self.cookie_service = cookie_service
         self.room_id = room_id
         self.ws: Optional[websockets.client.WebSocketClientProtocol] = None
         self.connected = False
+        # auth/health tracking
+        self.authenticated = False
+        self.awaiting_auth = False
+        self.auth_deadline = 0
+        self.last_inbound_activity = time.time()
+        self.last_outbound_echo = 0
+        self.integrity_task: Optional[asyncio.Task] = None
 
         self.last_message_time = time.time()
         self.read_task: Optional[asyncio.Task] = None
@@ -418,8 +476,7 @@ class SneedChatClient:
         # dedupe / edit tracking
         self.processed_message_ids = deque(maxlen=PROCESSED_CACHE_SIZE)
         self.message_edit_dates = BoundedMappingDict(
-            maxsize=MAPPING_CACHE_SIZE,
-            max_age=MAPPING_MAX_AGE
+            maxsize=MAPPING_CACHE_SIZE
         )
 
         # reconnection attempts counter
@@ -434,12 +491,13 @@ class SneedChatClient:
         try:
             while not self.shutdown_event.is_set():
                 await asyncio.sleep(MAPPING_CLEANUP_INTERVAL)
-                
+
                 # Cleanup edit dates
                 removed = self.message_edit_dates.cleanup_old_entries()
                 if removed > 0:
-                    logger.info(f"🧹 Cleaned up {removed} old message edit tracking entries")
-                
+                    logger.info(
+                        f"🧹 Cleaned up {removed} old message edit tracking entries")
+
         except asyncio.CancelledError:
             logger.debug("Cleanup task cancelled")
         except Exception as e:
@@ -455,7 +513,9 @@ class SneedChatClient:
                 self.cookie = fresh_cookie
         headers = {"Cookie": self.cookie}
         try:
-            logger.info(f"Connecting to Sneedchat room {self.room_id} (attempting websocket)")
+            logger.info(
+                f"Connecting to Sneedchat room {
+                    self.room_id} (attempting websocket)")
             self.ws = await websockets.connect(self.ws_url, additional_headers=headers, ping_interval=20, ping_timeout=10)
             self.connected = True
             self.reconnect_attempts = 0
@@ -464,7 +524,18 @@ class SneedChatClient:
             self.heartbeat_task = asyncio.create_task(self.heartbeat_loop())
             self.cleanup_task = asyncio.create_task(self.cleanup_loop())
             await self.send_command(f"/join {self.room_id}")
-            logger.info(f"✅ Successfully connected to Sneedchat room {self.room_id}")
+            logger.info(
+                f"✅ Successfully connected to Sneedchat room {
+                    self.room_id}")
+            # begin authentication verification window + heartbeat
+            self.authenticated = False
+            self.awaiting_auth = True
+            self.auth_deadline = time.time() + 10
+            try:
+                self.integrity_task.cancel()
+            except Exception:
+                pass
+            self.integrity_task = asyncio.create_task(self.integrity_loop())
             if self.on_connect:
                 await self.on_connect()
             return True
@@ -477,7 +548,11 @@ class SneedChatClient:
         logger.info("Disconnecting from Sneedchat")
         self.shutdown_event.set()
         self.connected = False
-        for task in (self.read_task, self.write_task, self.heartbeat_task, self.cleanup_task):
+        for task in (
+                self.read_task,
+                self.write_task,
+                self.heartbeat_task,
+                self.cleanup_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -497,6 +572,19 @@ class SneedChatClient:
                 if self.shutdown_event.is_set():
                     break
                 self.last_message_time = time.time()
+                self.last_inbound_activity = time.time()
+                if self.awaiting_auth and not self.authenticated:
+                    if self._check_for_user_in_userlist(message):
+                        self.authenticated = True
+                        self.awaiting_auth = False
+                        logger.info(
+                            "✅ Authentication verified via userlist payload")
+                    elif time.time() > self.auth_deadline:
+                        logger.warning(
+                            "🔒 Auth verification window expired; reconnecting with fresh cookie")
+                        await self.handle_disconnect()
+                        break
+                    continue
                 await self.handle_message(message)
         except Exception as e:
             logger.error(f"Sneedchat read loop error: {e}")
@@ -516,8 +604,34 @@ class SneedChatClient:
                     continue
         except Exception as e:
             logger.error(f"Sneedchat write loop error: {e}")
+        finally:
             if not self.shutdown_event.is_set():
                 await self.handle_disconnect()
+
+    async def integrity_loop(self):
+        try:
+            while not self.shutdown_event.is_set():
+                await asyncio.sleep(INACTIVITY_CHECK_INTERVAL)
+                if not self.connected:
+                    continue
+                now = time.time()
+                # Skip if recent inbound, echo, or queue non-empty
+                if (now - self.last_inbound_activity) < INACTIVITY_CHECK_INTERVAL:
+                    continue
+                if self.last_outbound_echo and (
+                        now - self.last_outbound_echo) < INACTIVITY_CHECK_INTERVAL:
+                    continue
+                if hasattr(
+                        self, "write_queue") and not self.write_queue.empty():
+                    continue
+                logger.info("💤 Idle ≥5m → issuing /join heartbeat")
+                await self.send_command(f"/join {self.room_id}")
+                self.awaiting_auth = True
+                self.auth_deadline = time.time() + 10
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Integrity loop error: {e}")
 
     async def heartbeat_loop(self):
         try:
@@ -527,6 +641,23 @@ class SneedChatClient:
                     await self.send_command("/ping")
         except Exception as e:
             logger.error(f"Heartbeat error: {e}")
+
+    def _check_for_user_in_userlist(self, raw: str) -> bool:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return False
+        users = data.get("users")
+        if not users:
+            return False
+        if 'BRIDGE_USER_ID' in globals() and BRIDGE_USER_ID and str(BRIDGE_USER_ID) in users:
+            return True
+        uname = (
+            globals().get('BRIDGE_USERNAME') or '').strip().lower()
+        for u in users.values():
+            if u.get("username", "").strip().lower() == uname and uname:
+                return True
+        return False
 
     async def handle_message(self, raw: str):
         # debug full payload if requested
@@ -546,13 +677,15 @@ class SneedChatClient:
         # top-level deletes
         if "delete" in content:
             delete_field = content["delete"]
-            del_list = delete_field if isinstance(delete_field, list) else [delete_field]
+            del_list = delete_field if isinstance(
+                delete_field, list) else [delete_field]
             for did in del_list:
                 try:
                     did_int = int(did)
                 except Exception:
                     continue
-                logger.info(f"🗑️ Received top-level Sneed delete for id={did_int}")
+                logger.info(
+                    f"🗑️ Received top-level Sneed delete for id={did_int}")
                 self.message_edit_dates.pop(did_int, None)
                 try:
                     if did_int in self.processed_message_ids:
@@ -563,7 +696,8 @@ class SneedChatClient:
                     try:
                         await self.on_delete(did_int)
                     except Exception as e:
-                        logger.error(f"Error in on_delete callback for id={did_int}: {e}")
+                        logger.error(
+                            f"Error in on_delete callback for id={did_int}: {e}")
 
         messages = []
         if "messages" in content:
@@ -577,14 +711,17 @@ class SneedChatClient:
                 username = author.get("username", "Unknown")
                 user_id = author.get("id")
                 message_id = msg.get("message_id")
-                message_text = msg.get("message_raw") or msg.get("message") or ""
+                message_text = msg.get(
+                    "message_raw") or msg.get("message") or ""
                 message_text = html.unescape(message_text)
                 edit_date = int(msg.get("message_edit_date", 0) or 0)
-                deleted_flag = msg.get("deleted") or msg.get("is_deleted") or False
+                deleted_flag = msg.get("deleted") or msg.get(
+                    "is_deleted") or False
 
                 # message-scoped deletion
                 if deleted_flag:
-                    logger.info(f"🗑️ Sneed message-scoped deletion id={message_id}")
+                    logger.info(
+                        f"🗑️ Sneed message-scoped deletion id={message_id}")
                     if message_id:
                         self.message_edit_dates.pop(message_id, None)
                         try:
@@ -596,23 +733,31 @@ class SneedChatClient:
                         await self.on_delete(message_id)
                     continue
 
-                # If message is from the bridge user: attempt mapping but do not forward
-                if (BRIDGE_USER_ID and user_id == BRIDGE_USER_ID) or (BRIDGE_USERNAME and username == BRIDGE_USERNAME):
-                    logger.debug(f"🚫 Received bridge-user echo from Sneed id={message_id}; attempting mapping but not forwarding")
+                # If message is from the bridge user: attempt mapping but do
+                # not forward
+                if (BRIDGE_USER_ID and user_id == BRIDGE_USER_ID) or (
+                        BRIDGE_USERNAME and username == BRIDGE_USERNAME):
+                    logger.debug(
+                        f"🚫 Received bridge-user echo from Sneed id={message_id}; attempting mapping but not forwarding")
                     if message_id:
                         now = time.time()
                         matched_entry = None
-                        for entry in reversed(list(self._recent_outbound_iter())):
+                        for entry in reversed(
+                                list(self._recent_outbound_iter())):
                             if entry.get("mapped"):
                                 continue
-                            if entry.get("content") == message_text and (now - entry.get("ts", 0)) <= OUTBOUND_MATCH_WINDOW:
+                            if entry.get("content") == message_text and (
+                                    now - entry.get("ts", 0)) <= OUTBOUND_MATCH_WINDOW:
                                 matched_entry = entry
                                 break
                         if matched_entry:
                             discord_id = matched_entry["discord_id"]
-                            self._map_discord_sneed(discord_id, int(message_id), username)
+                            self._map_discord_sneed(
+                                discord_id, int(message_id), username)
                             matched_entry["mapped"] = True
-                            logger.debug(f"Mapped Discord->{message_id} (discord_id={discord_id}) via bridge echo")
+                            self.last_outbound_echo = time.time()
+                            logger.debug(
+                                f"Mapped Discord->{message_id} (discord_id={discord_id}) via bridge echo")
                     if message_id:
                         self.processed_message_ids.append(message_id)
                         self.message_edit_dates[message_id] = edit_date
@@ -623,16 +768,19 @@ class SneedChatClient:
                 if message_id and message_id in self.processed_message_ids:
                     prev_edit = self.message_edit_dates.get(message_id, 0)
                     if edit_date and edit_date > prev_edit:
-                        logger.info(f"✏️ Edit detected for sneed_id={message_id}")
+                        logger.info(
+                            f"✏️ Edit detected for sneed_id={message_id}")
                         self.message_edit_dates[message_id] = edit_date
                         if self.on_edit:
                             await self.on_edit(message_id, message_text)
                     else:
-                        logger.debug(f"📄 Skipping duplicate message ID {message_id} from {username}")
+                        logger.debug(
+                            f"🔄 Skipping duplicate message ID {message_id} from {username}")
                     continue
 
                 # New message
-                logger.info(f"📄 New Sneed message from {username}: {message_text[:120]}...")
+                logger.info(
+                    f"📄 New Sneed message from {username}: {message_text[:120]}...")
                 if message_id:
                     self.processed_message_ids.append(message_id)
                     self.message_edit_dates[message_id] = edit_date
@@ -651,7 +799,11 @@ class SneedChatClient:
     def _recent_outbound_iter(self):
         return []
 
-    def _map_discord_sneed(self, discord_id: int, sneed_id: int, username: str):
+    def _map_discord_sneed(
+            self,
+            discord_id: int,
+            sneed_id: int,
+            username: str):
         pass
 
     async def send_message(self, content: str) -> bool:
@@ -674,7 +826,8 @@ class SneedChatClient:
         if self.shutdown_event.is_set():
             return
         try:
-            self.reconnect_attempts = getattr(self, "reconnect_attempts", 0) + 1
+            self.reconnect_attempts = getattr(
+                self, "reconnect_attempts", 0) + 1
         except Exception:
             self.reconnect_attempts = 1
         self.connected = False
@@ -687,6 +840,8 @@ class SneedChatClient:
 # -----------------------------
 # Discord Bridge
 # -----------------------------
+
+
 class DiscordBridge:
     def __init__(self, sneed_client: SneedChatClient):
         intents = discord.Intents.default()
@@ -709,23 +864,22 @@ class DiscordBridge:
 
         # mapping tables (now with memory management)
         self.sneed_to_discord = BoundedMappingDict(
-            maxsize=MAPPING_CACHE_SIZE,
-            max_age=MAPPING_MAX_AGE
+            maxsize=MAPPING_CACHE_SIZE
         )
         self.discord_to_sneed = BoundedMappingDict(
-            maxsize=MAPPING_CACHE_SIZE,
-            max_age=MAPPING_MAX_AGE
+            maxsize=MAPPING_CACHE_SIZE
         )
         self.sneed_usernames = BoundedMappingDict(
-            maxsize=MAPPING_CACHE_SIZE,
-            max_age=MAPPING_MAX_AGE
+            maxsize=MAPPING_CACHE_SIZE
         )
 
         # recent outbound messages (Discord -> Sneed) awaiting echo mapping
         self.recent_outbound = deque(maxlen=PROCESSED_CACHE_SIZE)
 
-        # queued outbound messages when Sneedchat is down (older than TTL dropped)
-        self.queued_outbound: List[Dict[str, Any]] = []  # {content, channel_id, ts, discord_id}
+        # queued outbound messages when Sneedchat is down (older than TTL
+        # dropped)
+        # {content, channel_id, ts, discord_id}
+        self.queued_outbound: List[Dict[str, Any]] = []
 
         # outage tracking
         self.outage_message: Optional[Any] = None
@@ -733,10 +887,10 @@ class DiscordBridge:
         self.outage_task: Optional[asyncio.Task] = None
         self.cleanup_task: Optional[asyncio.Task] = None
         self.outage_cleanup_task: Optional[asyncio.Task] = None
-        
+
         # outage event history (for instability detection)
         self.outage_events: List[float] = []  # timestamps of outages
-        
+
         self.shutdown_event = asyncio.Event()
 
         # start bot handlers
@@ -747,16 +901,17 @@ class DiscordBridge:
         try:
             while not self.shutdown_event.is_set():
                 await asyncio.sleep(MAPPING_CLEANUP_INTERVAL)
-                
+
                 # Cleanup mapping dictionaries
                 removed_s2d = self.sneed_to_discord.cleanup_old_entries()
                 removed_d2s = self.discord_to_sneed.cleanup_old_entries()
                 removed_usernames = self.sneed_usernames.cleanup_old_entries()
-                
+
                 total_removed = removed_s2d + removed_d2s + removed_usernames
                 if total_removed > 0:
-                    logger.info(f"🧹 Cleaned up {total_removed} old message mappings")
-                
+                    logger.info(
+                        f"🧹 Cleaned up {total_removed} old message mappings")
+
                 # Cleanup expired queued messages
                 now = time.time()
                 before_count = len(self.queued_outbound)
@@ -766,8 +921,11 @@ class DiscordBridge:
                 ]
                 after_count = len(self.queued_outbound)
                 if before_count > after_count:
-                    logger.info(f"🧹 Removed {before_count - after_count} expired queued messages")
-                
+                    logger.info(
+                        f"🧹 Removed {
+                            before_count -
+                            after_count} expired queued messages")
+
         except asyncio.CancelledError:
             logger.debug("Bridge cleanup task cancelled")
         except Exception as e:
@@ -777,11 +935,13 @@ class DiscordBridge:
         """Get outage statistics for the last 10 minutes"""
         now = time.time()
         window_start = now - OUTAGE_INSTABILITY_WINDOW
-        
+
         # Filter outage events within the window
-        recent_outages = [ts for ts in self.outage_events if ts >= window_start]
-        
-        # Calculate total downtime (approximate: assume each outage lasted until next event or now)
+        recent_outages = [
+            ts for ts in self.outage_events if ts >= window_start]
+
+        # Calculate total downtime (approximate: assume each outage lasted
+        # until next event or now)
         total_downtime = 0
         for i, ts in enumerate(recent_outages):
             if i + 1 < len(recent_outages):
@@ -790,7 +950,7 @@ class DiscordBridge:
                 # Last outage - only count if still ongoing
                 if not self.sneed_client.connected:
                     total_downtime += now - ts
-        
+
         return {
             "count": len(recent_outages),
             "total_downtime": total_downtime,
@@ -803,16 +963,19 @@ class DiscordBridge:
             channel = self.bot.get_channel(DISCORD_CHANNEL_ID)
             if not channel:
                 return
-            
+
             # Fetch recent messages and find outage notices
             async for message in channel.history(limit=100):
                 if message.author == self.bot.user and message.embeds:
                     embed = message.embeds[0]
                     if embed.title == "🌉 Bridge Status":
                         await message.delete()
-                        logger.debug(f"Deleted old outage message id={message.id}")
+                        logger.debug(
+                            f"Deleted old outage message id={
+                                message.id}")
         except Exception as e:
-            logger.debug(f"Could not delete old outage messages: {e}")
+            logger.debug(
+                f"Could not delete old outage messages: {e}")
 
     async def _schedule_outage_cleanup(self):
         """Schedule deletion of outage message 2 minutes after reconnect"""
@@ -822,7 +985,7 @@ class DiscordBridge:
                 await self.outage_cleanup_task
             except asyncio.CancelledError:
                 pass
-        
+
         async def cleanup_after_delay():
             try:
                 await asyncio.sleep(OUTAGE_CLEANUP_DELAY)
@@ -831,9 +994,11 @@ class DiscordBridge:
                         if isinstance(self.outage_message, discord.Message):
                             await self.outage_message.delete()
                         else:
-                            webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                            webhook = discord.Webhook.from_url(
+                                DISCORD_WEBHOOK_URL, session=self.session)
                             await webhook.delete_message(getattr(self.outage_message, "id", self.outage_message))
-                        logger.info("🗑️ Deleted outage message after 2 minute delay")
+                        logger.info(
+                            "🗑️ Deleted outage message after 2 minute delay")
                     except Exception as e:
                         logger.debug(f"Could not delete outage message: {e}")
                     finally:
@@ -841,19 +1006,22 @@ class DiscordBridge:
                         self.outage_start = None
             except asyncio.CancelledError:
                 pass
-        
+
         self.outage_cleanup_task = asyncio.create_task(cleanup_after_delay())
 
     def setup_bot(self):
         @self.bot.event
         async def on_ready():
-            logger.info(f"🤖 Discord bot ready: {self.bot.user} (id={self.bot.user.id})")
+            logger.info(
+                f"🤖 Discord bot ready: {
+                    self.bot.user} (id={
+                        self.bot.user.id})")
             self.session = aiohttp.ClientSession()
-            
+
             # Start cleanup task
             if not self.cleanup_task or self.cleanup_task.done():
                 self.cleanup_task = asyncio.create_task(self.cleanup_loop())
-            
+
             # ensure sneedclient connected
             if not self.sneed_client.connected:
                 asyncio.create_task(self.sneed_client.connect())
@@ -872,20 +1040,28 @@ class DiscordBridge:
             if message.channel.id != DISCORD_CHANNEL_ID:
                 return
 
-            logger.info(f"📤 Discord → Sneedchat: {message.author.display_name}: {message.content}")
+            logger.info(
+                f"📤 Discord → Sneedchat: {
+                    message.author.display_name}: {
+                        message.content}")
             await self.on_discord_message(message)
 
         @self.bot.event
-        async def on_message_edit(before: discord.Message, after: discord.Message):
+        async def on_message_edit(
+                before: discord.Message,
+                after: discord.Message):
             try:
                 discord_id = after.id
                 if discord_id in self.discord_to_sneed:
                     sneed_id = self.discord_to_sneed[discord_id]
-                    payload = json.dumps({"id": int(sneed_id), "message": after.content.strip()})
-                    logger.info(f"↩️ Discord edit -> Sneedchat (sneed_id={sneed_id})")
+                    payload = json.dumps(
+                        {"id": int(sneed_id), "message": after.content.strip()})
+                    logger.info(
+                        f"↩️ Discord edit -> Sneedchat (sneed_id={sneed_id})")
                     await self.sneed_client.send_command(f"/edit {payload}")
                 else:
-                    logger.debug(f"No mapping for edited discord_id={discord_id}")
+                    logger.debug(
+                        f"No mapping for edited discord_id={discord_id}")
             except Exception as e:
                 logger.error(f"Error handling discord edit: {e}")
 
@@ -895,10 +1071,12 @@ class DiscordBridge:
                 discord_id = message.id
                 if discord_id in self.discord_to_sneed:
                     sneed_id = self.discord_to_sneed[discord_id]
-                    logger.info(f"↩️ Discord delete -> Sneedchat (sneed_id={sneed_id})")
+                    logger.info(
+                        f"↩️ Discord delete -> Sneedchat (sneed_id={sneed_id})")
                     await self.sneed_client.send_command(f"/delete {int(sneed_id)}")
                 else:
-                    logger.debug(f"No mapping for deleted discord_id={discord_id}")
+                    logger.debug(
+                        f"No mapping for deleted discord_id={discord_id}")
             except Exception as e:
                 logger.error(f"Error handling discord delete: {e}")
 
@@ -913,12 +1091,14 @@ class DiscordBridge:
             await ctx.send(embed=embed)
 
         @self.bot.command(name="test")
-        async def test_command(ctx, *, text: str = "This is a test from !test"):
+        async def test_command(
+                ctx, *, text: str = "This is a test from !test"):
             if not self.session:
                 await ctx.send("❌ No HTTP session available for webhook.")
                 return
             try:
-                webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                webhook = discord.Webhook.from_url(
+                    DISCORD_WEBHOOK_URL, session=self.session)
                 response = await webhook.send(content=text, username="SneedTestUser", wait=True)
                 await ctx.send("✅ Test message sent via webhook.")
                 if args.debug:
@@ -930,24 +1110,34 @@ class DiscordBridge:
     def _recent_outbound_iter(self):
         return list(self.recent_outbound)
 
-    def _map_discord_sneed(self, discord_id: int, sneed_id: int, username: str):
+    def _map_discord_sneed(
+            self,
+            discord_id: int,
+            sneed_id: int,
+            username: str):
         try:
             self.discord_to_sneed[int(discord_id)] = int(sneed_id)
             self.sneed_to_discord[int(sneed_id)] = int(discord_id)
             self.sneed_usernames[int(sneed_id)] = username
             if args.debug:
-                logger.debug(f"Mapped sneed_id={sneed_id} <-> discord_id={discord_id} (username='{username}')")
+                logger.debug(
+                    f"Mapped sneed_id={sneed_id} <-> discord_id={discord_id} (username='{username}')")
         except Exception as e:
             logger.error(f"Failed to create map discord->{sneed_id}: {e}")
 
     # -------- Attachment uploads -> litterbox --------
-    async def upload_to_litterbox(self, file_url: str, filename: str) -> Optional[str]:
+    async def upload_to_litterbox(
+            self,
+            file_url: str,
+            filename: str) -> Optional[str]:
         """Download from Discord CDN and upload to Litterbox; return direct URL or None."""
         try:
             # Download from the provided URL (this will usually be discordcdn)
             async with self.session.get(file_url) as resp:
                 if resp.status != 200:
-                    logger.error(f"Failed to download attachment '{filename}': HTTP {resp.status}")
+                    logger.error(
+                        f"Failed to download attachment '{filename}': HTTP {
+                            resp.status}")
                     return None
                 data = await resp.read()
             # Prepare form data
@@ -958,24 +1148,30 @@ class DiscordBridge:
             form.add_field('fileToUpload', data, filename=filename)
             async with self.session.post('https://litterbox.catbox.moe/resources/internals/api.php', data=form) as upl:
                 if upl.status != 200:
-                    logger.error(f"Litterbox upload failed for '{filename}': HTTP {upl.status}")
+                    logger.error(
+                        f"Litterbox upload failed for '{filename}': HTTP {
+                            upl.status}")
                     txt = await upl.text()
                     logger.debug(f"Litterbox response: {txt}")
                     return None
                 url = (await upl.text()).strip()
-                logger.info(f"SUCCESS: Uploaded '{filename}' to Litterbox: {url}")
+                logger.info(
+                    f"SUCCESS: Uploaded '{filename}' to Litterbox: {url}")
                 return url
         except Exception as e:
-            logger.error(f"Exception during Litterbox upload for '{filename}': {e}")
+            logger.error(
+                f"Exception during Litterbox upload for '{filename}': {e}")
             return None
 
-    async def format_attachment_bbcode(self, attachment: discord.Attachment) -> Optional[str]:
+    async def format_attachment_bbcode(
+            self, attachment: discord.Attachment) -> Optional[str]:
         """Upload attachment and return BBCode string for Sneedchat."""
         url = await self.upload_to_litterbox(attachment.url, attachment.filename)
         if not url:
             return None
         ctype = (attachment.content_type or "").lower()
-        if ctype.startswith('video/') or attachment.filename.lower().endswith(('.mp4', '.webm', '.mov', '.mkv')):
+        if ctype.startswith(
+                'video/') or attachment.filename.lower().endswith(('.mp4', '.webm', '.mov', '.mkv')):
             # Use [url=link]Video N[/url]
             return url
         else:
@@ -987,14 +1183,16 @@ class DiscordBridge:
         # If Sneedchat offline: queue message
         content_text = message.content.strip()
         # Handle reply mapping (Discord -> Sneed)
-        if message.reference and getattr(message.reference, "message_id", None):
+        if message.reference and getattr(
+                message.reference, "message_id", None):
             ref_discord_id = message.reference.message_id
             try:
                 sneed_id = self.discord_to_sneed.get(ref_discord_id)
                 if sneed_id:
                     original_username = self.sneed_usernames.get(sneed_id)
                     if original_username:
-                        # do NOT strip spaces from username per instruction; only strip message text
+                        # do NOT strip spaces from username per instruction;
+                        # only strip message text
                         content_text = f"@{original_username}, {content_text}"
             except Exception as e:
                 logger.error(f"Failed to resolve reply username mapping: {e}")
@@ -1012,24 +1210,32 @@ class DiscordBridge:
                 if not catbox_url:
                     # error reporting in discord buffer
                     await message.channel.send(f"❌ Failed to upload attachment `{att.filename}` to Litterbox; aborting send.")
-                    logger.error(f"Attachment upload failed for {att.filename}; aborting Discord->Sneed send.")
+                    logger.error(
+                        f"Attachment upload failed for {
+                            att.filename}; aborting Discord->Sneed send.")
                     return
-                # Build bbcode: video -> [url=..]Video N[/url], images -> [url=..][img]..[/img][/url] per earlier spec
+                # Build bbcode: video -> [url=..]Video N[/url], images ->
+                # [url=..][img]..[/img][/url] per earlier spec
                 content_type = (att.content_type or "").lower()
-                if content_type.startswith('video') or att.filename.lower().endswith(('.mp4', '.webm', '.mov', '.mkv')):
-                    attachments_bb.append(f"[url={catbox_url}][video]{catbox_url}[/video][/url]")
+                if content_type.startswith('video') or att.filename.lower().endswith(
+                        ('.mp4', '.webm', '.mov', '.mkv')):
+                    attachments_bb.append(
+                        f"[url={catbox_url}][video]{catbox_url}[/video][/url]")
                 else:
-                    attachments_bb.append(f"[url={catbox_url}][img]{catbox_url}[/img][/url]")
+                    attachments_bb.append(
+                        f"[url={catbox_url}][img]{catbox_url}[/img][/url]")
 
         # Build final message to send to Sneed
         combined = content_text
         if attachments_bb:
-            combined = combined + ("\n" if combined else "") + "\n".join(attachments_bb)
+            combined = combined + \
+                ("\n" if combined else "") + "\n".join(attachments_bb)
 
         # Try to send to Sneedchat (non-blocking)
         sent = await self.sneed_client.send_message(combined)
         if sent:
-            # record for outbound mapping waiting for echo (so bridge can map sneed id to discord id)
+            # record for outbound mapping waiting for echo (so bridge can map
+            # sneed id to discord id)
             try:
                 entry = {
                     "discord_id": message.id,
@@ -1039,7 +1245,9 @@ class DiscordBridge:
                 }
                 self.recent_outbound.append(entry)
                 if args.debug:
-                    logger.debug(f"Queued outbound mapping for discord_id={message.id}")
+                    logger.debug(
+                        f"Queued outbound mapping for discord_id={
+                            message.id}")
             except Exception as e:
                 logger.error(f"Failed to record outbound mapping: {e}")
         else:
@@ -1050,7 +1258,8 @@ class DiscordBridge:
                 "ts": time.time(),
                 "discord_id": message.id
             })
-            logger.info("Queued message for delivery when Sneedchat reconnects")
+            logger.info(
+                "Queued message for delivery when Sneedchat reconnects")
             try:
                 # notify channel
                 await message.channel.send(f"⚠️ Sneedchat appears offline. Your message has been queued for delivery (will expire after {QUEUED_MESSAGE_TTL}s).")
@@ -1070,7 +1279,8 @@ class DiscordBridge:
         # Replace mentions of BRIDGE_USERNAME with Discord ping (if configured)
         if BRIDGE_USERNAME and DISCORD_PING_USER_ID:
             try:
-                pattern = re.compile(rf'@{re.escape(BRIDGE_USERNAME)}(?=\W|$)', re.IGNORECASE)
+                pattern = re.compile(
+                    rf'@{re.escape(BRIDGE_USERNAME)}(?=\W|$)', re.IGNORECASE)
                 content = pattern.sub(f'<@{DISCORD_PING_USER_ID}>', content)
             except Exception:
                 pass
@@ -1079,30 +1289,39 @@ class DiscordBridge:
         author = raw.get("author", {}) or {}
         if author.get("avatar_url"):
             avatar_path = author["avatar_url"]
-            avatar_url = f"https://kiwifarms.st{avatar_path}" if avatar_path.startswith("/") else avatar_path
+            avatar_url = f"https://kiwifarms.st{avatar_path}" if avatar_path.startswith(
+                "/") else avatar_path
 
-        # If this Sneed message is an echo of the bridge user -> attempt to map to the outbound discord message, DO NOT forward
-        if (author_id and BRIDGE_USER_ID and author_id == BRIDGE_USER_ID) or (BRIDGE_USERNAME and username == BRIDGE_USERNAME):
+        # If this Sneed message is an echo of the bridge user -> attempt to map
+        # to the outbound discord message, DO NOT forward
+        if (author_id and BRIDGE_USER_ID and author_id == BRIDGE_USER_ID) or (
+                BRIDGE_USERNAME and username == BRIDGE_USERNAME):
             if args.debug:
-                logger.debug(f"Bridge-echo from sneed_id={message_id} (username={username}); attempting mapping but not forwarding")
+                logger.debug(
+                    f"Bridge-echo from sneed_id={message_id} (username={username}); attempting mapping but not forwarding")
             if message_id:
                 now = time.time()
                 matched_entry = None
                 for entry in list(self.recent_outbound):
                     if entry.get("mapped"):
                         continue
-                    if entry.get("content") == (raw_content) and (now - entry.get("ts", 0)) <= OUTBOUND_MATCH_WINDOW:
+                    if entry.get("content") == (raw_content) and (
+                            now - entry.get("ts", 0)) <= OUTBOUND_MATCH_WINDOW:
                         matched_entry = entry
                         break
                 if matched_entry:
                     discord_id = matched_entry["discord_id"]
-                    self._map_discord_sneed(discord_id, int(message_id), username)
+                    self._map_discord_sneed(
+                        discord_id, int(message_id), username)
                     matched_entry["mapped"] = True
+                    self.last_outbound_echo = time.time()
                     if args.debug:
-                        logger.debug(f"Mapped outbound discord_id={discord_id} -> sneed_id={message_id} (bridge echo)")
+                        logger.debug(
+                            f"Mapped outbound discord_id={discord_id} -> sneed_id={message_id} (bridge echo)")
                     return
             if args.debug:
-                logger.debug("No recent outbound match for bridge echo; dropping silently")
+                logger.debug(
+                    "No recent outbound match for bridge echo; dropping silently")
             return
 
         # Normal Sneed-origin message: post via webhook with parsed content
@@ -1111,7 +1330,8 @@ class DiscordBridge:
             return
 
         try:
-            webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+            webhook = discord.Webhook.from_url(
+                DISCORD_WEBHOOK_URL, session=self.session)
             # send parsed content; username is verbatim from Sneed JSON
             sent = await webhook.send(content=content, username=username, avatar_url=avatar_url, wait=True)
             logger.info(f"✅ Sent Sneedchat → Discord: {username}")
@@ -1119,7 +1339,8 @@ class DiscordBridge:
             if message_id:
                 discord_msg_id = None
                 try:
-                    # some webhook libs return an object, sometimes id directly; handle both
+                    # some webhook libs return an object, sometimes id
+                    # directly; handle both
                     discord_msg_id = int(getattr(sent, "id", None) or sent)
                 except Exception:
                     discord_msg_id = None
@@ -1128,18 +1349,22 @@ class DiscordBridge:
                     self.discord_to_sneed[discord_msg_id] = int(message_id)
                     self.sneed_usernames[int(message_id)] = username
                     if args.debug:
-                        logger.debug(f"Mapped Sneed->{discord_msg_id} (sneed_id={message_id})")
+                        logger.debug(
+                            f"Mapped Sneed->{discord_msg_id} (sneed_id={message_id})")
         except Exception as e:
-            logger.error(f"❌ Failed to send Sneed → Discord webhook message: {e}")
+            logger.error(
+                f"❌ Failed to send Sneed → Discord webhook message: {e}")
 
-    async def _handle_sneed_edit(self, sneed_id: int, new_content: str):
+    async def _handle_sneed_edit(
+            self, sneed_id: int, new_content: str):
         try:
             sneed_id = int(sneed_id)
         except Exception:
             return
         discord_msg_id = self.sneed_to_discord.get(sneed_id)
         if not discord_msg_id:
-            logger.debug(f"No discord mapping for sneed edit id={sneed_id}")
+            logger.debug(
+                f"No discord mapping for sneed edit id={sneed_id}")
             return
         if not self.session:
             logger.error("❌ No HTTP session for webhook edit")
@@ -1147,12 +1372,15 @@ class DiscordBridge:
 
         # run through parser BEFORE editing so bbcode isn't shown raw
         parsed = bbcode_to_markdown(new_content)
-        webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+        webhook = discord.Webhook.from_url(
+            DISCORD_WEBHOOK_URL, session=self.session)
         try:
             await webhook.edit_message(discord_msg_id, content=parsed)
-            logger.info(f"✏️ Edited Discord (webhook) message id={discord_msg_id} (sneed_id={sneed_id})")
+            logger.info(
+                f"✏️ Edited Discord (webhook) message id={discord_msg_id} (sneed_id={sneed_id})")
         except Exception as e:
-            logger.error(f"❌ Failed to edit Discord message id={discord_msg_id}: {e}")
+            logger.error(
+                f"❌ Failed to edit Discord message id={discord_msg_id}: {e}")
 
     async def _handle_sneed_delete(self, sneed_id: int):
         try:
@@ -1167,15 +1395,18 @@ class DiscordBridge:
             logger.error("❌ No HTTP session for webhook delete")
             return
 
-        webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+        webhook = discord.Webhook.from_url(
+            DISCORD_WEBHOOK_URL, session=self.session)
         try:
             await webhook.delete_message(discord_msg_id)
-            logger.info(f"🗑️ Deleted Discord (webhook) message id={discord_msg_id} (sneed_id={sneed_id})")
+            logger.info(
+                f"🗑️ Deleted Discord (webhook) message id={discord_msg_id} (sneed_id={sneed_id})")
             self.sneed_to_discord.pop(sneed_id, None)
             self.discord_to_sneed.pop(discord_msg_id, None)
             self.sneed_usernames.pop(sneed_id, None)
         except Exception as e:
-            logger.error(f"❌ Failed to delete Discord message id={discord_msg_id}: {e}")
+            logger.error(
+                f"❌ Failed to delete Discord message id={discord_msg_id}: {e}")
 
     # -------- Sneedchat connect/disconnect (outage embed) --------
     async def on_sneed_connect(self):
@@ -1185,51 +1416,69 @@ class DiscordBridge:
 
         # Get outage stats before finalizing
         stats = self._get_outage_stats()
-        
+
         # finalize outage embed if present
         if self.outage_message:
             try:
                 elapsed = int(time.time() - (self.outage_start or time.time()))
                 attempts = getattr(self.sneed_client, "reconnect_attempts", 0)
-                
+
                 # Build embed based on whether system is unstable
                 if stats["is_unstable"]:
                     embed = discord.Embed(
                         title="🌉 Bridge Status",
                         description="✅ **Sneedchat reconnected (instability resolved)**",
-                        color=0x00FF00
-                    )
-                    embed.add_field(name="Last Incident Duration", value=f"{elapsed}s", inline=True)
-                    embed.add_field(name="Total Downtime (10min)", value=f"{int(stats['total_downtime'])}s", inline=True)
-                    embed.add_field(name="Outages (10min)", value=str(stats["count"]), inline=True)
+                        color=0x00FF00)
+                    embed.add_field(
+                        name="Last Incident Duration",
+                        value=f"{elapsed}s",
+                        inline=True)
+                    embed.add_field(name="Total Downtime (10min)",
+                                    value=f"{int(stats['total_downtime'])}s",
+                                    inline=True)
+                    embed.add_field(
+                        name="Outages (10min)", value=str(
+                            stats["count"]), inline=True)
                 else:
                     embed = discord.Embed(
                         title="🌉 Bridge Status",
                         description="✅ **Sneedchat reconnected**",
                         color=0x00FF00
                     )
-                    embed.add_field(name="Downtime", value=f"{elapsed}s", inline=True)
-                    embed.add_field(name="Reconnect Attempts", value=str(attempts), inline=True)
-                
-                embed.add_field(name="Room ID", value=str(self.sneed_client.room_id), inline=True)
-                
+                    embed.add_field(
+                        name="Downtime",
+                        value=f"{elapsed}s",
+                        inline=True)
+                    embed.add_field(
+                        name="Reconnect Attempts",
+                        value=str(attempts),
+                        inline=True)
+
+                embed.add_field(
+                    name="Room ID", value=str(
+                        self.sneed_client.room_id), inline=True)
+
                 try:
                     if isinstance(self.outage_message, discord.Message):
                         await self.outage_message.edit(content=None, embed=embed)
                     else:
-                        # attempt webhook edit if outage_message is webhook response
-                        webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                        # attempt webhook edit if outage_message is webhook
+                        # response
+                        webhook = discord.Webhook.from_url(
+                            DISCORD_WEBHOOK_URL, session=self.session)
                         await webhook.edit_message(getattr(self.outage_message, "id", self.outage_message), embed=embed)
-                    logger.info("🔔 Outage notice updated as restored")
+                    logger.info("📝 Outage notice updated as restored")
                 except Exception as e:
-                    logger.error(f"Failed to update outage message on reconnect: {e}")
+                    logger.error(
+                        f"Failed to update outage message on reconnect: {e}")
             except Exception as e:
                 logger.error(f"Error finalizing outage message: {e}")
 
             # Schedule deletion 2 minutes after reconnect
             await self._schedule_outage_cleanup()
         else:
-            # No outage message, but still schedule cleanup (cleanup after 2 min if Sneedchat goes down again and comes back)
+            # No outage message, but still schedule cleanup (cleanup after 2
+            # min if Sneedchat goes down again and comes back)
             pass
 
         # After reconnect, try flushing queued_outbound
@@ -1242,10 +1491,12 @@ class DiscordBridge:
 
         # Record this outage event
         self.outage_events.append(time.time())
-        
+
         # Clean up old events outside the 10-minute window
         now = time.time()
-        self.outage_events = [ts for ts in self.outage_events if now - ts <= OUTAGE_INSTABILITY_WINDOW]
+        self.outage_events = [
+            ts for ts in self.outage_events if now -
+            ts <= OUTAGE_INSTABILITY_WINDOW]
 
         # If there's an existing outage message, delete old ones and reset
         if self.outage_message:
@@ -1255,16 +1506,17 @@ class DiscordBridge:
                     await self.outage_message.delete()
                 else:
                     try:
-                        webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                        webhook = discord.Webhook.from_url(
+                            DISCORD_WEBHOOK_URL, session=self.session)
                         await webhook.delete_message(getattr(self.outage_message, "id", self.outage_message))
                     except Exception:
                         pass
             except Exception:
                 pass
-            
+
             self.outage_message = None
             self.outage_start = None
-            
+
             # Cancel cleanup task if running
             if self.outage_cleanup_task and not self.outage_cleanup_task.done():
                 self.outage_cleanup_task.cancel()
@@ -1272,7 +1524,7 @@ class DiscordBridge:
                     await self.outage_cleanup_task
                 except asyncio.CancelledError:
                     pass
-            
+
             # Cancel updater task if running
             if self.outage_task and not self.outage_task.done():
                 self.outage_task.cancel()
@@ -1283,91 +1535,124 @@ class DiscordBridge:
 
         # Get current stats
         stats = self._get_outage_stats()
-        
+
         # record outage start and post embed
         self.outage_start = time.time()
         current_attempts = getattr(self.sneed_client, "reconnect_attempts", 0)
         try:
             channel = self.bot.get_channel(DISCORD_CHANNEL_ID)
-            
+
             # Build embed based on stability
             if stats["is_unstable"]:
                 embed = discord.Embed(
                     title="🌉 Bridge Status",
                     description="⚠️ **Sneedchat unstable - multiple reconnections**",
-                    color=0xFF0000
-                )
-                embed.add_field(name="Outages (10min)", value=str(stats["count"]), inline=True)
-                embed.add_field(name="Last Outage Duration", value="0s", inline=True)
-                embed.add_field(name="Total Downtime", value=f"{int(stats['total_downtime'])}s", inline=True)
+                    color=0xFF0000)
+                embed.add_field(
+                    name="Outages (10min)", value=str(
+                        stats["count"]), inline=True)
+                embed.add_field(
+                    name="Last Outage Duration",
+                    value="0s",
+                    inline=True)
+                embed.add_field(name="Total Downtime",
+                                value=f"{int(stats['total_downtime'])}s",
+                                inline=True)
             else:
                 embed = discord.Embed(
                     title="🌉 Bridge Status",
                     description="⚠️ **Sneedchat disconnected**",
                     color=0xFF0000
                 )
-                embed.add_field(name="Outage Duration", value="0s", inline=True)
-                embed.add_field(name="Reconnect Attempts", value=str(current_attempts), inline=True)
-            
-            embed.add_field(name="Room ID", value=str(self.sneed_client.room_id), inline=True)
-            
+                embed.add_field(
+                    name="Outage Duration",
+                    value="0s",
+                    inline=True)
+                embed.add_field(
+                    name="Reconnect Attempts",
+                    value=str(current_attempts),
+                    inline=True)
+
+            embed.add_field(
+                name="Room ID",
+                value=str(
+                    self.sneed_client.room_id),
+                inline=True)
+
             if channel:
                 self.outage_message = await channel.send(embed=embed)
-                logger.info("🔔 Outage notice posted to Discord")
+                logger.info("📝 Outage notice posted to Discord")
             else:
                 # fallback to webhook if channel isn't available
                 if self.session:
-                    webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                    webhook = discord.Webhook.from_url(
+                        DISCORD_WEBHOOK_URL, session=self.session)
                     sent = await webhook.send(embed=embed, username="SneedBridge", wait=True)
-                    logger.info("🔔 Outage notice posted to Discord via webhook")
+                    logger.info(
+                        "📝 Outage notice posted to Discord via webhook")
                     self.outage_message = sent
                 else:
-                    logger.error("No channel found and no session available to post outage notice")
+                    logger.error(
+                        "No channel found and no session available to post outage notice")
 
             # start updater task
             async def updater():
                 try:
                     while self.outage_message and not self.sneed_client.connected:
-                        elapsed = int(time.time() - (self.outage_start or time.time()))
-                        attempts = getattr(self.sneed_client, "reconnect_attempts", 0)
+                        elapsed = int(time.time() -
+                                      (self.outage_start or time.time()))
+                        attempts = getattr(
+                            self.sneed_client, "reconnect_attempts", 0)
                         current_stats = self._get_outage_stats()
-                        
+
                         # Update embed based on stability
                         if current_stats["is_unstable"]:
                             embed = discord.Embed(
                                 title="🌉 Bridge Status",
                                 description="⚠️ **Sneedchat outage ongoing (system unstable)**",
-                                color=0xFF0000
-                            )
-                            embed.add_field(name="Outages (10min)", value=str(current_stats["count"]), inline=True)
-                            embed.add_field(name="Last Outage Duration", value=f"{elapsed}s", inline=True)
-                            embed.add_field(name="Total Downtime", value=f"{int(current_stats['total_downtime'])}s", inline=True)
+                                color=0xFF0000)
+                            embed.add_field(
+                                name="Outages (10min)", value=str(
+                                    current_stats["count"]), inline=True)
+                            embed.add_field(
+                                name="Last Outage Duration", value=f"{elapsed}s", inline=True)
+                            embed.add_field(
+                                name="Total Downtime", value=f"{int(current_stats['total_downtime'])}s", inline=True)
                         else:
                             embed = discord.Embed(
                                 title="🌉 Bridge Status",
                                 description="⚠️ **Sneedchat outage ongoing**",
                                 color=0xFF0000
                             )
-                            embed.add_field(name="Outage Duration", value=f"{elapsed}s", inline=True)
-                            embed.add_field(name="Reconnect Attempts", value=str(attempts), inline=True)
-                        
-                        embed.add_field(name="Room ID", value=str(self.sneed_client.room_id), inline=True)
-                        
+                            embed.add_field(
+                                name="Outage Duration", value=f"{elapsed}s", inline=True)
+                            embed.add_field(
+                                name="Reconnect Attempts", value=str(attempts), inline=True)
+
+                        embed.add_field(
+                            name="Room ID", value=str(
+                                self.sneed_client.room_id), inline=True)
+
                         try:
-                            if isinstance(self.outage_message, discord.Message):
+                            if isinstance(
+                                    self.outage_message, discord.Message):
                                 await self.outage_message.edit(embed=embed)
                             else:
                                 try:
-                                    webhook = discord.Webhook.from_url(DISCORD_WEBHOOK_URL, session=self.session)
+                                    webhook = discord.Webhook.from_url(
+                                        DISCORD_WEBHOOK_URL, session=self.session)
                                     await webhook.edit_message(getattr(self.outage_message, "id", self.outage_message), embed=embed)
                                 except Exception:
-                                    logger.debug("Could not edit outage webhook message; skipping edit")
+                                    logger.debug(
+                                        "Could not edit outage webhook message; skipping edit")
                         except Exception as e:
-                            logger.error(f"Failed to update outage message: {e}")
+                            logger.error(
+                                f"Failed to update outage message: {e}")
                         await asyncio.sleep(OUTAGE_UPDATE_INTERVAL)
                 except asyncio.CancelledError:
                     logger.debug("Outage updater task cancelled")
                     return
+
             self.outage_task = asyncio.create_task(updater())
         except Exception as e:
             logger.error(f"Failed to send outage notice: {e}")
@@ -1377,7 +1662,8 @@ class DiscordBridge:
         """Attempt to send queued messages to Sneedchat after reconnection."""
         if not self.queued_outbound:
             return
-        logger.info(f"Flushing {len(self.queued_outbound)} queued messages to Sneedchat")
+        logger.info(
+            f"Flushing {len(self.queued_outbound)} queued messages to Sneedchat")
         now = time.time()
         # iterate copy to allow removal
         for entry in list(self.queued_outbound):
@@ -1411,35 +1697,37 @@ class DiscordBridge:
                     except Exception:
                         pass
             else:
-                # still not connected (shouldn't happen inside on_sneed_connect), break
-                logger.debug("Sneedchat still not accepting messages during flush")
+                # still not connected (shouldn't happen inside
+                # on_sneed_connect), break
+                logger.debug(
+                    "Sneedchat still not accepting messages during flush")
                 break
 
     # -------- Cleanup --------
     async def cleanup(self):
         self.shutdown_event.set()
-        
+
         if self.cleanup_task and not self.cleanup_task.done():
             self.cleanup_task.cancel()
             try:
                 await self.cleanup_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self.outage_task and not self.outage_task.done():
             self.outage_task.cancel()
             try:
                 await self.outage_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self.outage_cleanup_task and not self.outage_cleanup_task.done():
             self.outage_cleanup_task.cancel()
             try:
                 await self.outage_cleanup_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self.session and not self.session.closed:
             await self.session.close()
 
@@ -1447,11 +1735,14 @@ class DiscordBridge:
         await self.bot.start(DISCORD_BOT_TOKEN)
 
 # -------- Main --------
+
+
 async def main():
     logger.info("Starting Discord-Sneedchat Bridge")
 
     # start cookie refresh
-    cookie_service = CookieRefreshService(username=BRIDGE_USERNAME, password=BRIDGE_PASSWORD)
+    cookie_service = CookieRefreshService(
+        username=BRIDGE_USERNAME, password=BRIDGE_PASSWORD)
     await cookie_service.start()
     logger.info("⏳ Waiting for initial cookie...")
     await cookie_service.wait_for_cookie()
@@ -1462,7 +1753,11 @@ async def main():
         return
 
     # instantiate sneed client & bridge
-    sneed_client = SneedChatClient(cookie=initial_cookie, room_id=SNEEDCHAT_ROOM_ID, reconnect_interval=RECONNECT_INTERVAL, cookie_service=cookie_service)
+    sneed_client = SneedChatClient(
+        cookie=initial_cookie,
+        room_id=SNEEDCHAT_ROOM_ID,
+        reconnect_interval=RECONNECT_INTERVAL,
+        cookie_service=cookie_service)
     bridge = DiscordBridge(sneed_client=sneed_client)
 
     # run the bridge (discord bot)
@@ -1474,6 +1769,7 @@ async def main():
         await cookie_service.stop()
         await sneed_client.disconnect()
         await bridge.cleanup()
+
 
 if __name__ == "__main__":
     try:
